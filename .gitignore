@@ -1,2 +1,3 @@
-mnist_job/MNIST/*
+test_job/mnist/mnist_model.pt
+test_job/mnist/MNIST/*
 *.csv
