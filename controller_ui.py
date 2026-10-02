@@ -89,6 +89,7 @@ class AgentConnection(QThread):
     def __init__(self, info: WorkerInfo, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.info = info
+        self.agent_username = ""
         self._stop_event = threading.Event()
         self._socket: socket.socket | None = None
 
@@ -201,7 +202,6 @@ class AddWorkerDialog(QDialog):
 class WorkerCard(QFrame):
     remove_requested = pyqtSignal(object)
     power_requested = pyqtSignal(object)
-    ssh_requested = pyqtSignal(object)
     job_requested = pyqtSignal(object)
 
     def __init__(self, info: WorkerInfo, parent: QWidget | None = None) -> None:
@@ -266,20 +266,16 @@ class WorkerCard(QFrame):
         actions = QHBoxLayout()
         power = QPushButton("⏻ 전원")
         power.setProperty("class", "cardAction power")
-        ssh = QPushButton("⌕ SSH 연결")
-        ssh.setProperty("class", "cardAction")
         job = QPushButton("▣ 작업 전송")
         job.setProperty("class", "cardAction")
-        for button in (power, ssh, job):
+        for button in (power, job):
             button.setObjectName("cardAction")
             button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         power.setObjectName("cardAction")
         power.setProperty("class", "power")
         power.clicked.connect(lambda: self.power_requested.emit(self))
-        ssh.clicked.connect(lambda: self.ssh_requested.emit(self))
         job.clicked.connect(lambda: self.job_requested.emit(self))
         actions.addWidget(power)
-        actions.addWidget(ssh)
         actions.addWidget(job)
         root.addLayout(actions)
 
@@ -315,7 +311,8 @@ class WorkerCard(QFrame):
         if message_type not in {"probe_ack", "heartbeat"}:
             return
         self.device_label.setText(str(message.get("hostname", "알 수 없음")))
-        self.user_label.setText(str(message.get("username", "알 수 없음")))
+        self.agent_username = str(message.get("username", "")).strip()
+        self.user_label.setText(self.agent_username or "알 수 없음")
         if message_type == "probe_ack":
             self.connection_label.setText("● 연결됨 · 초기 테스트 완료")
         else:
@@ -404,7 +401,6 @@ class ControllerWindow(QMainWindow):
         card = WorkerCard(dialog.worker_info())
         card.remove_requested.connect(self.remove_worker)
         card.power_requested.connect(self.show_placeholder)
-        card.ssh_requested.connect(self.show_placeholder)
         card.job_requested.connect(self.show_placeholder)
         self.cards.append(card)
         self._start_connection(card)
@@ -441,7 +437,6 @@ class ControllerWindow(QMainWindow):
                 card = WorkerCard(WorkerInfo(alias, host, port, mac))
                 card.remove_requested.connect(self.remove_worker)
                 card.power_requested.connect(self.show_placeholder)
-                card.ssh_requested.connect(self.show_placeholder)
                 card.job_requested.connect(self.show_placeholder)
                 self.cards.append(card)
                 self._start_connection(card)
@@ -503,7 +498,6 @@ class ControllerWindow(QMainWindow):
             "UI 미리보기",
             f"'{card.info.alias}' 패널의 기능 연결 위치입니다.\n실제 기능은 다음 단계에서 연결합니다.",
         )
-
 
 def main() -> int:
     app = QApplication(sys.argv)

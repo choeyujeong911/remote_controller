@@ -2,6 +2,8 @@
 중앙 컨트롤러와 워커 에이전트를 관리하는 저장소
 - `controller_ui.py`: PyQt6 기반 중앙 컨트롤러 UI 프로토타입
 - `agent.py`: 워커 데스크톱에서 UI 없이 실행하는 probe/heartbeat 에이전트
+- `register-task.ps1`: 로그인 전 부팅 시 에이전트를 자동 실행하도록 작업 스케줄러에 등록
+- `install-ssh.ps1`: 워커의 Windows OpenSSH Server 설치 및 기본 설정
 - 워커 패널 정보는 로컬 `controller_workers.json`에 저장되며 Git에는 포함하지 않음
 - 워커 통신, WOL, SSH, 작업 실행 기능은 UI 설계 이후 단계에서 다시 구현 예정
 
