@@ -1,0 +1,348 @@
+"""PyQt6 front-end prototype for the central controller.
+
+The widgets in this module intentionally contain presentation-only behavior.
+Networking, WOL, SSH, and job dispatch can be connected to the signals exposed
+by WorkerCard when those services are implemented.
+"""
+
+from __future__ import annotations
+
+import sys
+from dataclasses import dataclass
+
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal
+from PyQt6.QtGui import QFont
+from PyQt6.QtWidgets import (
+    QApplication,
+    QDialog,
+    QDialogButtonBox,
+    QFormLayout,
+    QFrame,
+    QGridLayout,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QMainWindow,
+    QMessageBox,
+    QProgressBar,
+    QPushButton,
+    QScrollArea,
+    QSizePolicy,
+    QVBoxLayout,
+    QWidget,
+)
+
+
+APP_STYLE = """
+QMainWindow, QWidget { background: #f4f7fb; color: #172033; }
+QFrame#header { background: #172b4d; border-radius: 14px; }
+QLabel#brand { color: white; font-size: 23px; font-weight: 700; }
+QLabel#subtitle { color: #b7c5dc; font-size: 12px; }
+QLabel#sectionTitle { color: #172033; font-size: 17px; font-weight: 700; }
+QLabel#count { color: #60708c; font-size: 12px; }
+QPushButton#addButton { background: #3978e8; color: white; border: none; border-radius: 9px; padding: 10px 16px; font-weight: 700; }
+QPushButton#addButton:hover { background: #2f67ce; }
+QFrame#card { background: white; border: 1px solid #dce4ef; border-radius: 13px; }
+QFrame#cardHeader { background: transparent; border: none; }
+QLabel#alias { font-size: 16px; font-weight: 700; }
+QLabel#online { color: #1a9b62; font-size: 11px; font-weight: 700; }
+QLabel#offline { color: #df6670; font-size: 11px; font-weight: 700; }
+QLabel#meta { color: #66758d; font-size: 12px; }
+QLabel#metric { color: #35445b; font-size: 11px; }
+QLabel#metricValue { color: #172033; font-size: 12px; font-weight: 700; }
+QProgressBar { background: #edf1f6; border: none; border-radius: 4px; height: 7px; }
+QProgressBar::chunk { background: #3978e8; border-radius: 4px; }
+QPushButton#remove { background: transparent; color: #8996aa; border: none; font-size: 16px; padding: 0 4px; }
+QPushButton#remove:hover { color: #df5966; }
+QPushButton.cardAction { background: #eef3fa; color: #2f405c; border: none; border-radius: 7px; padding: 8px 6px; }
+QPushButton.cardAction:hover { background: #dfe9f8; }
+QPushButton.power { background: #fff0f0; color: #c44752; }
+QPushButton.power:hover { background: #ffe1e3; }
+QGroupBox { border: 1px solid #dce4ef; border-radius: 9px; margin-top: 9px; padding: 13px 10px 10px; font-weight: 700; }
+QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 4px; }
+QLineEdit { border: 1px solid #cbd6e5; border-radius: 7px; padding: 8px; background: white; }
+QLineEdit:focus { border: 1px solid #3978e8; }
+"""
+
+
+@dataclass
+class WorkerInfo:
+    alias: str
+    host: str
+    port: str
+    mac: str = ""
+
+
+class AddWorkerDialog(QDialog):
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("워커 패널 추가")
+        self.setMinimumWidth(430)
+
+        intro = QLabel("연결할 워커 데스크톱의 정보를 입력하세요.")
+        intro.setObjectName("meta")
+
+        self.alias = QLineEdit()
+        self.alias.setPlaceholderText("예: GPU 워커 01")
+        self.address = QLineEdit()
+        self.address.setPlaceholderText("예: 192.168.0.25:8765")
+        self.mac = QLineEdit()
+        self.mac.setPlaceholderText("선택 사항 · 예: AA:BB:CC:DD:EE:FF")
+
+        form = QFormLayout()
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        form.addRow("패널 별명 *", self.alias)
+        form.addRow("IP:포트 *", self.address)
+        form.addRow("MAC 주소", self.mac)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok
+            | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self._validate_and_accept)
+        buttons.rejected.connect(self.reject)
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("패널 생성")
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("취소")
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(14)
+        layout.addWidget(intro)
+        layout.addLayout(form)
+        layout.addWidget(buttons)
+
+    def _validate_and_accept(self) -> None:
+        if not self.alias.text().strip() or not self.address.text().strip():
+            QMessageBox.warning(self, "입력 필요", "별명과 IP:포트는 필수입니다.")
+            return
+        if ":" not in self.address.text():
+            QMessageBox.warning(self, "입력 확인", "IP:포트 형식으로 입력하세요.")
+            return
+        self.accept()
+
+    def worker_info(self) -> WorkerInfo:
+        host, port = self.address.text().strip().rsplit(":", 1)
+        return WorkerInfo(self.alias.text().strip(), host, port, self.mac.text().strip())
+
+
+class WorkerCard(QFrame):
+    remove_requested = pyqtSignal(object)
+    power_requested = pyqtSignal(object)
+    ssh_requested = pyqtSignal(object)
+    job_requested = pyqtSignal(object)
+
+    def __init__(self, info: WorkerInfo, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.info = info
+        self.setObjectName("card")
+        self.setMinimumWidth(300)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(16, 13, 16, 15)
+        root.setSpacing(11)
+
+        header = QFrame()
+        header.setObjectName("cardHeader")
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        title_box = QVBoxLayout()
+        title_box.setSpacing(2)
+        alias = QLabel(info.alias)
+        alias.setObjectName("alias")
+        status = QLabel("● 연결 테스트 대기")
+        status.setObjectName("online")
+        title_box.addWidget(alias)
+        title_box.addWidget(status)
+        remove = QPushButton("×")
+        remove.setObjectName("remove")
+        remove.setToolTip("패널 삭제")
+        remove.clicked.connect(lambda: self.remove_requested.emit(self))
+        header_layout.addLayout(title_box)
+        header_layout.addStretch()
+        header_layout.addWidget(remove, alignment=Qt.AlignmentFlag.AlignTop)
+        root.addWidget(header)
+
+        details = QGroupBox("기본 정보")
+        details_layout = QVBoxLayout(details)
+        details_layout.setSpacing(5)
+        details_layout.addWidget(self._meta("장치 이름", "연결 테스트 후 표시"))
+        details_layout.addWidget(self._meta("기본 사용자", "연결 테스트 후 표시"))
+        details_layout.addWidget(self._meta("주소", f"{info.host}:{info.port}"))
+        root.addWidget(details)
+
+        resources = QGroupBox("실시간 리소스")
+        resources_layout = QGridLayout(resources)
+        resources_layout.setVerticalSpacing(7)
+        self._add_metric(resources_layout, 0, "CPU", "-- %")
+        self._add_metric(resources_layout, 1, "메모리", "-- %")
+        self._add_metric(resources_layout, 2, "디스크", "-- %")
+        self._add_metric(resources_layout, 3, "GPU", "-- %")
+        root.addWidget(resources)
+
+        state_row = QHBoxLayout()
+        state_row.addWidget(QLabel("작업 상태"))
+        state = QLabel("대기 중")
+        state.setObjectName("metricValue")
+        state_row.addStretch()
+        state_row.addWidget(state)
+        root.addLayout(state_row)
+
+        actions = QHBoxLayout()
+        power = QPushButton("⏻ 전원")
+        power.setProperty("class", "cardAction power")
+        ssh = QPushButton("⌕ SSH 연결")
+        ssh.setProperty("class", "cardAction")
+        job = QPushButton("▣ 작업 전송")
+        job.setProperty("class", "cardAction")
+        for button in (power, ssh, job):
+            button.setObjectName("cardAction")
+            button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        power.setObjectName("cardAction")
+        power.setProperty("class", "power")
+        power.clicked.connect(lambda: self.power_requested.emit(self))
+        ssh.clicked.connect(lambda: self.ssh_requested.emit(self))
+        job.clicked.connect(lambda: self.job_requested.emit(self))
+        actions.addWidget(power)
+        actions.addWidget(ssh)
+        actions.addWidget(job)
+        root.addLayout(actions)
+
+    @staticmethod
+    def _meta(label: str, value: str) -> QWidget:
+        row = QWidget()
+        layout = QHBoxLayout(row)
+        layout.setContentsMargins(0, 0, 0, 0)
+        key = QLabel(label)
+        key.setObjectName("meta")
+        val = QLabel(value)
+        val.setObjectName("metricValue")
+        layout.addWidget(key)
+        layout.addStretch()
+        layout.addWidget(val)
+        return row
+
+    @staticmethod
+    def _add_metric(layout: QGridLayout, row: int, name: str, value: str) -> None:
+        label = QLabel(name)
+        label.setObjectName("metric")
+        number = QLabel(value)
+        number.setObjectName("metricValue")
+        bar = QProgressBar()
+        bar.setRange(0, 100)
+        bar.setValue(0)
+        layout.addWidget(label, row, 0)
+        layout.addWidget(bar, row, 1)
+        layout.addWidget(number, row, 2)
+
+
+class ControllerWindow(QMainWindow):
+    def __init__(self) -> None:
+        super().__init__()
+        self.setWindowTitle("Remote Controller")
+        self.resize(1120, 760)
+        self.cards: list[WorkerCard] = []
+
+        central = QWidget()
+        self.setCentralWidget(central)
+        root = QVBoxLayout(central)
+        root.setContentsMargins(26, 24, 26, 22)
+        root.setSpacing(22)
+
+        header = QFrame()
+        header.setObjectName("header")
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(23, 18, 19, 18)
+        title_box = QVBoxLayout()
+        title_box.setSpacing(4)
+        brand = QLabel("Remote Controller")
+        brand.setObjectName("brand")
+        subtitle = QLabel("워커 데스크톱을 카드로 관리하고 상태를 모니터링합니다")
+        subtitle.setObjectName("subtitle")
+        title_box.addWidget(brand)
+        title_box.addWidget(subtitle)
+        add = QPushButton("＋ 워커 패널 추가")
+        add.setObjectName("addButton")
+        add.clicked.connect(self.add_worker)
+        header_layout.addLayout(title_box)
+        header_layout.addStretch()
+        header_layout.addWidget(add)
+        root.addWidget(header)
+
+        section = QHBoxLayout()
+        heading = QLabel("워커 데스크톱")
+        heading.setObjectName("sectionTitle")
+        self.count = QLabel("0개 연결됨")
+        self.count.setObjectName("count")
+        section.addWidget(heading)
+        section.addWidget(self.count)
+        section.addStretch()
+        root.addLayout(section)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.canvas = QWidget()
+        self.grid = QGridLayout(self.canvas)
+        self.grid.setContentsMargins(0, 0, 0, 0)
+        self.grid.setHorizontalSpacing(16)
+        self.grid.setVerticalSpacing(16)
+        self.grid.setAlignment(Qt.AlignmentFlag.AlignTop)
+        scroll.setWidget(self.canvas)
+        root.addWidget(scroll, 1)
+
+        self.empty = QLabel("워커 패널을 추가하면 이곳에 표시됩니다.")
+        self.empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.empty.setObjectName("meta")
+        self.grid.addWidget(self.empty, 0, 0, 1, 3)
+
+    def add_worker(self) -> None:
+        dialog = AddWorkerDialog(self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        card = WorkerCard(dialog.worker_info())
+        card.remove_requested.connect(self.remove_worker)
+        card.power_requested.connect(self.show_placeholder)
+        card.ssh_requested.connect(self.show_placeholder)
+        card.job_requested.connect(self.show_placeholder)
+        self.cards.append(card)
+        self._rebuild_grid()
+
+    def remove_worker(self, card: WorkerCard) -> None:
+        if card not in self.cards:
+            return
+        self.cards.remove(card)
+        card.deleteLater()
+        self._rebuild_grid()
+
+    def _rebuild_grid(self) -> None:
+        while self.grid.count():
+            item = self.grid.takeAt(0)
+            if item.widget() is not None:
+                item.widget().setParent(None)
+        if not self.cards:
+            self.grid.addWidget(self.empty, 0, 0, 1, 3)
+        else:
+            for index, card in enumerate(self.cards):
+                self.grid.addWidget(card, index // 3, index % 3)
+        self.count.setText(f"{len(self.cards)}개 연결됨")
+
+    def show_placeholder(self, card: WorkerCard) -> None:
+        QMessageBox.information(
+            self,
+            "UI 미리보기",
+            f"'{card.info.alias}' 패널의 기능 연결 위치입니다.\n실제 기능은 다음 단계에서 연결합니다.",
+        )
+
+
+def main() -> int:
+    app = QApplication(sys.argv)
+    app.setStyleSheet(APP_STYLE)
+    app.setFont(QFont("맑은 고딕", 10))
+    window = ControllerWindow()
+    window.show()
+    return app.exec()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

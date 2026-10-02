@@ -1,16 +1,16 @@
 # remote_controller
-중앙 컴퓨터의 Controller, 각 워커 데스크톱의 Agent, Executor를 모두 포함하는 저장소
-- Controller: `controller.py`, 중앙 컴퓨터에서 실행되어 워커 데스크톱의 IP, Agent의 Port를 입력하면 Job을 보내는 일종의 Client. 지표를 CSV로 저장하기도 함
-- Agent: `agent.py`, Host OS에서 실행되어 중앙의 Controller가 보내온 Job을 Executor에게 전달해 처리하고 결과물과 지표를 Controller에게 다시 보내주는 역할
-- Executor: 각 환경(Native, WSL2, Guest VM, Docker 컨테이너 등)에서 실행되어 Agent가 준 Job을 처리하고 결과를 Agent에게 반환하는 역할
-    - `native_exe.py`: 별도로 실행되진 않고, 에이전트에서 자식 프로세스로 Job을 처리하기 위한 함수를 가지는 모듈(모드 1)
-    - `guestvm_exe.py`: Guest VM 내부에서 별도로 실행되는 모듈(모드 2)
-    - `wsl2vm_exe.py`: WSL2 배포판 내부에서 별도로 실행되는 모듈(모드 3)
-    - `docker_exe.py`: Host OS에서 별도로 실행되는 모듈(모드 4)
-    - `k8s_exe.py`: 미정(master node에서 실행할까 싶음)
+중앙 컨트롤러와 워커 에이전트를 관리하는 저장소
+- `controller_ui.py`: PyQt6 기반 중앙 컨트롤러 UI 프로토타입
+- 워커 통신, WOL, SSH, 작업 실행 기능은 UI 설계 이후 단계에서 다시 구현 예정
 
 
 ### 추가 작업
+
+### 중앙 컨트롤러 UI 미리보기
+- PyQt6 설치: `pip install -r requirements-ui.txt`
+- UI 실행: `python controller_ui.py`
+- 현재 화면은 워커 카드, 패널 추가/삭제 다이얼로그, 기본 정보·리소스·작업 상태 표시와 기능 버튼 배치만 제공합니다. 실제 WOL, SSH, 에이전트 통신은 후속 작업에서 연결합니다.
+
 - winget으로 Git, Python 설치
     ```Powershell
     winget install -e --id Git.Git
