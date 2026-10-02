@@ -68,7 +68,24 @@ Register-ScheduledTask `
     -Settings $Settings `
     -Force | Out-Null
 
+$FirewallRuleName = "RemoteController-Agent-8765"
+if (Get-NetFirewallRule -Name $FirewallRuleName -ErrorAction SilentlyContinue) {
+    Enable-NetFirewallRule -Name $FirewallRuleName
+    Set-NetFirewallRule -Name $FirewallRuleName -Profile Any
+} else {
+    New-NetFirewallRule `
+        -Name $FirewallRuleName `
+        -DisplayName "Remote Controller Agent (8765)" `
+        -Enabled True `
+        -Direction Inbound `
+        -Protocol TCP `
+        -Action Allow `
+        -LocalPort 8765 `
+        -Profile Any | Out-Null
+}
+
 Write-Host "RemoteControllerAgent 작업을 등록했습니다." -ForegroundColor Green
+Write-Host "TCP 8765 인바운드 방화벽 규칙을 확인했습니다."
 Write-Host "저장소: $AgentRepo"
 Write-Host "Python: $AgentPython"
 Write-Host "부팅 후 포트: 8765"

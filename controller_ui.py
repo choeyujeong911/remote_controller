@@ -15,7 +15,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from PyQt6.QtCore import QThread, Qt, pyqtSignal
-from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QApplication,
     QDialog,
@@ -37,37 +36,6 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-
-APP_STYLE = """
-QMainWindow, QWidget { background: #f4f7fb; color: #172033; }
-QFrame#header { background: #172b4d; border-radius: 14px; }
-QLabel#brand { background: transparent; color: white; font-size: 23px; font-weight: 700; }
-QLabel#subtitle { background: transparent; color: #b7c5dc; font-size: 12px; }
-QLabel#sectionTitle { color: #172033; font-size: 17px; font-weight: 700; }
-QLabel#count { color: #60708c; font-size: 12px; }
-QPushButton#addButton { background: #3978e8; color: white; border: none; border-radius: 9px; padding: 10px 16px; font-weight: 700; }
-QPushButton#addButton:hover { background: #2f67ce; }
-QFrame#card { background: white; border: 1px solid #dce4ef; border-radius: 13px; }
-QFrame#cardHeader { background: transparent; border: none; }
-QLabel#alias { font-size: 16px; font-weight: 700; }
-QLabel#online { color: #1a9b62; font-size: 11px; font-weight: 700; }
-QLabel#offline { color: #df6670; font-size: 11px; font-weight: 700; }
-QLabel#meta { color: #66758d; font-size: 12px; }
-QLabel#metric { color: #35445b; font-size: 11px; }
-QLabel#metricValue { color: #172033; font-size: 12px; font-weight: 700; }
-QProgressBar { background: #edf1f6; border: none; border-radius: 4px; height: 7px; }
-QProgressBar::chunk { background: #3978e8; border-radius: 4px; }
-QPushButton#remove { background: transparent; color: #8996aa; border: none; font-size: 16px; padding: 0 4px; }
-QPushButton#remove:hover { color: #df5966; }
-QPushButton.cardAction { background: #eef3fa; color: #2f405c; border: none; border-radius: 7px; padding: 8px 6px; }
-QPushButton.cardAction:hover { background: #dfe9f8; }
-QPushButton.power { background: #fff0f0; color: #c44752; }
-QPushButton.power:hover { background: #ffe1e3; }
-QGroupBox { border: 1px solid #dce4ef; border-radius: 9px; margin-top: 9px; padding: 13px 10px 10px; font-weight: 700; }
-QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 4px; }
-QLineEdit { border: 1px solid #cbd6e5; border-radius: 7px; padding: 8px; background: white; }
-QLineEdit:focus { border: 1px solid #3978e8; }
-"""
 
 WORKERS_FILE = Path(__file__).with_name("controller_workers.json")
 
@@ -148,13 +116,16 @@ class AgentConnection(QThread):
 
 
 class AddWorkerDialog(QDialog):
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        info: WorkerInfo | None = None,
+    ) -> None:
         super().__init__(parent)
-        self.setWindowTitle("워커 패널 추가")
+        self.setWindowTitle("워커 패널 수정" if info else "워커 패널 추가")
         self.setMinimumWidth(430)
 
         intro = QLabel("연결할 워커 데스크톱의 정보를 입력하세요.")
-        intro.setObjectName("meta")
 
         self.alias = QLineEdit()
         self.alias.setPlaceholderText("예: GPU 워커 01")
@@ -162,6 +133,10 @@ class AddWorkerDialog(QDialog):
         self.address.setPlaceholderText("예: 192.168.0.25:8765")
         self.mac = QLineEdit()
         self.mac.setPlaceholderText("선택 사항 · 예: AA-BB-CC-DD-EE-FF")
+        if info is not None:
+            self.alias.setText(info.alias)
+            self.address.setText(f"{info.host}:{info.port}")
+            self.mac.setText(info.mac)
 
         form = QFormLayout()
         form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
@@ -175,7 +150,9 @@ class AddWorkerDialog(QDialog):
         )
         buttons.accepted.connect(self._validate_and_accept)
         buttons.rejected.connect(self.reject)
-        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("패널 생성")
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText(
+            "저장" if info else "패널 생성"
+        )
         buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("취소")
 
         layout = QVBoxLayout(self)
@@ -201,54 +178,49 @@ class AddWorkerDialog(QDialog):
 
 class WorkerCard(QFrame):
     remove_requested = pyqtSignal(object)
+    edit_requested = pyqtSignal(object)
     power_requested = pyqtSignal(object)
     job_requested = pyqtSignal(object)
 
     def __init__(self, info: WorkerInfo, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.info = info
-        self.setObjectName("card")
         self.setMinimumWidth(300)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(16, 13, 16, 15)
-        root.setSpacing(11)
-
-        header = QFrame()
-        header.setObjectName("cardHeader")
+        header = QWidget()
         header_layout = QHBoxLayout(header)
-        header_layout.setContentsMargins(0, 0, 0, 0)
         title_box = QVBoxLayout()
-        title_box.setSpacing(2)
-        alias = QLabel(info.alias)
-        alias.setObjectName("alias")
+        self.alias_label = QLabel(info.alias)
         self.connection_label = QLabel("● 연결 테스트 대기")
-        self.connection_label.setObjectName("online")
-        title_box.addWidget(alias)
+        self._set_connection_color("gray")
+        title_box.addWidget(self.alias_label)
         title_box.addWidget(self.connection_label)
         remove = QPushButton("×")
-        remove.setObjectName("remove")
         remove.setToolTip("패널 삭제")
         remove.clicked.connect(lambda: self.remove_requested.emit(self))
+        edit = QPushButton("수정")
+        edit.setToolTip("워커 정보 수정")
+        edit.clicked.connect(lambda: self.edit_requested.emit(self))
         header_layout.addLayout(title_box)
         header_layout.addStretch()
+        header_layout.addWidget(edit, alignment=Qt.AlignmentFlag.AlignTop)
         header_layout.addWidget(remove, alignment=Qt.AlignmentFlag.AlignTop)
         root.addWidget(header)
 
         details = QGroupBox("기본 정보")
         details_layout = QVBoxLayout(details)
-        details_layout.setSpacing(5)
         device_row, self.device_label = self._meta("장치 이름", "연결 테스트 후 표시")
         user_row, self.user_label = self._meta("기본 사용자", "연결 테스트 후 표시")
         details_layout.addWidget(device_row)
         details_layout.addWidget(user_row)
-        details_layout.addWidget(self._meta("주소", f"{info.host}:{info.port}")[0])
+        address_row, self.address_label = self._meta("주소", f"{info.host}:{info.port}")
+        details_layout.addWidget(address_row)
         root.addWidget(details)
 
         resources = QGroupBox("실시간 리소스")
         resources_layout = QGridLayout(resources)
-        resources_layout.setVerticalSpacing(7)
         self._add_metric(resources_layout, 0, "CPU", "-- %")
         self._add_metric(resources_layout, 1, "메모리", "-- %")
         self._add_metric(resources_layout, 2, "디스크", "-- %")
@@ -258,21 +230,15 @@ class WorkerCard(QFrame):
         state_row = QHBoxLayout()
         state_row.addWidget(QLabel("작업 상태"))
         state = QLabel("대기 중")
-        state.setObjectName("metricValue")
         state_row.addStretch()
         state_row.addWidget(state)
         root.addLayout(state_row)
 
         actions = QHBoxLayout()
         power = QPushButton("⏻ 전원")
-        power.setProperty("class", "cardAction power")
         job = QPushButton("▣ 작업 전송")
-        job.setProperty("class", "cardAction")
         for button in (power, job):
-            button.setObjectName("cardAction")
             button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        power.setObjectName("cardAction")
-        power.setProperty("class", "power")
         power.clicked.connect(lambda: self.power_requested.emit(self))
         job.clicked.connect(lambda: self.job_requested.emit(self))
         actions.addWidget(power)
@@ -283,11 +249,8 @@ class WorkerCard(QFrame):
     def _meta(label: str, value: str) -> tuple[QWidget, QLabel]:
         row = QWidget()
         layout = QHBoxLayout(row)
-        layout.setContentsMargins(0, 0, 0, 0)
         key = QLabel(label)
-        key.setObjectName("meta")
         val = QLabel(value)
-        val.setObjectName("metricValue")
         layout.addWidget(key)
         layout.addStretch()
         layout.addWidget(val)
@@ -296,15 +259,21 @@ class WorkerCard(QFrame):
     def update_connection(self, state: str) -> None:
         if state == "connected":
             self.connection_label.setText("● 연결됨 · probe 전송")
-            self.connection_label.setObjectName("online")
+            self._set_connection_color("green")
         elif state == "connecting":
             self.connection_label.setText("● 연결 테스트 중...")
-            self.connection_label.setObjectName("online")
+            self._set_connection_color("green")
         else:
             self.connection_label.setText("● 연결 끊김 · 재시도 중")
-            self.connection_label.setObjectName("offline")
-        self.connection_label.style().unpolish(self.connection_label)
-        self.connection_label.style().polish(self.connection_label)
+            self._set_connection_color("red")
+
+    def update_info(self, info: WorkerInfo) -> None:
+        self.info = info
+        self.agent_username = ""
+        self.alias_label.setText(info.alias)
+        self.address_label.setText(f"{info.host}:{info.port}")
+        self.connection_label.setText("● 연결 테스트 대기")
+        self._set_connection_color("gray")
 
     def update_agent_message(self, message: dict) -> None:
         message_type = message.get("type")
@@ -317,13 +286,15 @@ class WorkerCard(QFrame):
             self.connection_label.setText("● 연결됨 · 초기 테스트 완료")
         else:
             self.connection_label.setText("● 연결됨 · heartbeat 수신")
+        self._set_connection_color("green")
+
+    def _set_connection_color(self, color: str) -> None:
+        self.connection_label.setStyleSheet(f"color: {color};")
 
     @staticmethod
     def _add_metric(layout: QGridLayout, row: int, name: str, value: str) -> None:
         label = QLabel(name)
-        label.setObjectName("metric")
         number = QLabel(value)
-        number.setObjectName("metricValue")
         bar = QProgressBar()
         bar.setRange(0, 100)
         bar.setValue(0)
@@ -343,23 +314,14 @@ class ControllerWindow(QMainWindow):
         central = QWidget()
         self.setCentralWidget(central)
         root = QVBoxLayout(central)
-        root.setContentsMargins(26, 24, 26, 22)
-        root.setSpacing(22)
-
-        header = QFrame()
-        header.setObjectName("header")
+        header = QWidget()
         header_layout = QHBoxLayout(header)
-        header_layout.setContentsMargins(23, 18, 19, 18)
         title_box = QVBoxLayout()
-        title_box.setSpacing(4)
         brand = QLabel("Remote Controller")
-        brand.setObjectName("brand")
         subtitle = QLabel("워커 데스크톱을 카드로 관리하고 상태를 모니터링합니다")
-        subtitle.setObjectName("subtitle")
         title_box.addWidget(brand)
         title_box.addWidget(subtitle)
         add = QPushButton("＋ 워커 패널 추가")
-        add.setObjectName("addButton")
         add.clicked.connect(self.add_worker)
         header_layout.addLayout(title_box)
         header_layout.addStretch()
@@ -368,9 +330,7 @@ class ControllerWindow(QMainWindow):
 
         section = QHBoxLayout()
         heading = QLabel("워커 데스크톱")
-        heading.setObjectName("sectionTitle")
         self.count = QLabel("0개 연결됨")
-        self.count.setObjectName("count")
         section.addWidget(heading)
         section.addWidget(self.count)
         section.addStretch()
@@ -378,19 +338,14 @@ class ControllerWindow(QMainWindow):
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
         self.canvas = QWidget()
         self.grid = QGridLayout(self.canvas)
-        self.grid.setContentsMargins(0, 0, 0, 0)
-        self.grid.setHorizontalSpacing(16)
-        self.grid.setVerticalSpacing(16)
         self.grid.setAlignment(Qt.AlignmentFlag.AlignTop)
         scroll.setWidget(self.canvas)
         root.addWidget(scroll, 1)
 
         self.empty = QLabel("워커 패널을 추가하면 이곳에 표시됩니다.")
         self.empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.empty.setObjectName("meta")
         self.grid.addWidget(self.empty, 0, 0, 1, 3)
         self._load_workers()
 
@@ -400,6 +355,7 @@ class ControllerWindow(QMainWindow):
             return
         card = WorkerCard(dialog.worker_info())
         card.remove_requested.connect(self.remove_worker)
+        card.edit_requested.connect(self.edit_worker)
         card.power_requested.connect(self.show_placeholder)
         card.job_requested.connect(self.show_placeholder)
         self.cards.append(card)
@@ -415,6 +371,15 @@ class ControllerWindow(QMainWindow):
         card.deleteLater()
         self._save_workers()
         self._rebuild_grid()
+
+    def edit_worker(self, card: WorkerCard) -> None:
+        dialog = AddWorkerDialog(self, card.info)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        self._stop_connection(card)
+        card.update_info(dialog.worker_info())
+        self._start_connection(card)
+        self._save_workers()
 
     def _load_workers(self) -> None:
         """Restore the local worker list without failing UI startup on bad data."""
@@ -436,6 +401,7 @@ class ControllerWindow(QMainWindow):
             if alias and host and port:
                 card = WorkerCard(WorkerInfo(alias, host, port, mac))
                 card.remove_requested.connect(self.remove_worker)
+                card.edit_requested.connect(self.edit_worker)
                 card.power_requested.connect(self.show_placeholder)
                 card.job_requested.connect(self.show_placeholder)
                 self.cards.append(card)
@@ -501,8 +467,6 @@ class ControllerWindow(QMainWindow):
 
 def main() -> int:
     app = QApplication(sys.argv)
-    app.setStyleSheet(APP_STYLE)
-    app.setFont(QFont("맑은 고딕", 10))
     window = ControllerWindow()
     window.show()
     return app.exec()
